@@ -5,12 +5,13 @@ use reqwest::{Client};
 use serde::{Deserialize, Serialize};
 use lambda_runtime::{LambdaEvent, service_fn};
 use rand::{Rng, thread_rng};
+use scraper::{Html, Selector};
 use serde_json::Value;
 
 type LambdaError = Box<dyn std::error::Error + Send + Sync + 'static>;
 
 
-#[derive(Debug, Serialize,Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 struct SecretConfig {
     username: String,
     password: String,
@@ -86,11 +87,11 @@ async fn truth_access_token(username: &str, password: &str) -> anyhow::Result<St
     let str = serde_json::to_string(&o_auth_request)?;
 
     let response = client.post("https://truthsocial.com/oauth/token")
-        .header("Accept","application/json, text/plain, */*")
-        .header("Accept-encoding","gzip")
+        .header("Accept", "application/json, text/plain, */*")
+        .header("Accept-encoding", "gzip")
         .header("Referer", "https://truthsocial.com/login")
         .header("Host", "truthsocial.com")
-        .header("Content-Type","application/json")
+        .header("Content-Type", "application/json")
         .header("Origin", "https://truthsocial.com")
         .header("Content-Length", str.bytes().len())
         .json(&o_auth_request)
@@ -117,24 +118,38 @@ async fn post_truth(client: &Client, token: &str, truth: &str) -> anyhow::Result
         to: vec![],
     };
     client.post("https://truthsocial.com/api/v1/statuses")
-        .header("Authorization", format!("Bearer {}",token))
+        .header("Authorization", format!("Bearer {}", token))
         .json(&post_data)
         .send().await?;
 
     Ok(())
 }
 
+
+async fn get_meaning(client: &Client, word: &str) -> anyhow::Result<String> {
+    let doc = client.get(format!("https://ejje.weblio.jp/content/{}", word))
+        .send().await?
+        .text().await?;
+    let doc = Html::parse_document(&doc);
+    let selector = Selector::parse("span.content-explanation").unwrap();
+    let meaning = doc.select(&selector).next().unwrap().text().collect::<String>();
+
+
+    Ok(meaning.trim().to_owned())
+}
+
 async fn post_one_word_truth(client: &Client, token: &str, word_data: &str, data_size: u32) -> anyhow::Result<()> {
     let mut rng = thread_rng();
     let l = rng.gen_range(0..data_size);
     let word = word_data.split("\n").nth(l as usize).unwrap();
+    let meaning = get_meaning(client, word).await?;
 
-    post_truth(client, token, &format!("Truth英単語 {}: {} \nhttps://eow.alc.co.jp/search?q={}", l+1, word, word)).await
+    post_truth(client, token, &format!("Truth英単語 {}: {}\n\n{}", l + 1, word, meaning)).await
 }
 
 #[tokio::main]
 async fn main() -> Result<(), LambdaError> {
-    simple_logging::log_to_stderr(LevelFilter::Debug);
+    simple_logging::log_to_stderr(LevelFilter::Warn);
 
     let config = aws_config::load_defaults(BehaviorVersion::latest()).await;
     let client = aws_sdk_secretsmanager::Client::new(&config);
@@ -166,4 +181,21 @@ async fn main() -> Result<(), LambdaError> {
     });
     lambda_runtime::run(func).await?;
     Ok::<(), LambdaError>(())
+}
+
+#[cfg(test)]
+mod test {
+    use reqwest::Client;
+    use crate::get_meaning;
+
+    #[test]
+    fn meaning() {
+        let client = Client::builder()
+            .user_agent("Mozilla/5.0 (X11; Linux x86_64; rv:122.0) Gecko/20100101 Firefox/122.0")
+            .use_rustls_tls()
+            .build().unwrap();
+        let actual = tokio_test::block_on(get_meaning(&client, "truth"));
+        assert!(actual.is_ok());
+        assert_eq!("真理、真、真実、真相、事実、本当のこと、真実性、(事の)真偽、誠実、正直", actual.ok().unwrap());
+    }
 }
