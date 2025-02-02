@@ -65,6 +65,7 @@ output "scheduler_role" {
 
 resource "aws_lambda_function" "english_learner_bot_lambda" {
   filename = "../../bot_lambda/target/lambda/src/bootstrap.zip"
+  source_code_hash = filebase64sha256("../../bot_lambda/target/lambda/src/bootstrap.zip")
   function_name = "english_learner_bot"
   handler = "rust.handler"
   runtime = "provided.al2023"
@@ -76,6 +77,8 @@ resource "aws_lambda_function" "english_learner_bot_lambda" {
 resource "aws_scheduler_schedule" "english_learner_cron" {
   name = "english_learner_cron"
   schedule_expression = "rate(60 minutes)"
+  description = "Schedule the invoke of english_learner_bot. One run is posting one truth."
+
   flexible_time_window {
     mode = "FLEXIBLE"
     maximum_window_in_minutes = 5
@@ -84,5 +87,6 @@ resource "aws_scheduler_schedule" "english_learner_cron" {
   target {
     arn      = aws_lambda_function.english_learner_bot_lambda.arn
     role_arn = local.scheduler_executor_role
+    input = "{}"
   }
 }
