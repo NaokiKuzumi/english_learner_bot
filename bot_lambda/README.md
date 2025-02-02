@@ -9,6 +9,10 @@ username: string username of the truth social account
 password: string password of the truth social account
 
 ## To build and run 
+Be logged in to aws.
+
+    aws sso login
+
 In one terminal
 
     cargo lambda watch
